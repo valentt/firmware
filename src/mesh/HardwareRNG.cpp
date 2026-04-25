@@ -19,8 +19,12 @@ extern Adafruit_nRFCrypto nRFCrypto;
 #include <Arduino.h>
 #elif defined(ARCH_PORTDUINO)
 #include <random>
-#include <sys/random.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/random.h> // getrandom()
+#else
+#include <stdlib.h> // arc4random_buf() on Darwin/BSD
+#endif
 #endif
 
 namespace HardwareRNG
@@ -48,10 +52,13 @@ bool mixWithLoRaEntropy(uint8_t *buffer, size_t length)
     // and return false so callers know no extra mixing occurred.
     RadioLibInterface *radio = RadioLibInterface::instance;
     if (!radio) {
-        // This path can run during portduinoSetup() before the console is initialized.
-#ifndef PIO_UNIT_TESTING
-        LOG_ERROR("No radio instance available to provide entropy");
-#endif
+        // Intentionally silent: this path runs during portduinoSetup() before the
+        // console / SerialConsole / RedirectablePrint singleton is initialized,
+        // so calling LOG_* here dereferences uninitialized globals and crashes
+        // (caught loudly under ASAN; subtle UB without). The `PIO_UNIT_TESTING`
+        // guard alone isn't enough — the integration test (`meshtasticd -s`)
+        // doesn't define that symbol either. See PR meshtastic/firmware#10300
+        // CI run for the ASAN backtrace and the prior fix history.
         return false;
     }
 
@@ -118,10 +125,16 @@ bool fill(uint8_t *buffer, size_t length, bool useRadioEntropy)
     filled = true;
 #elif defined(ARCH_PORTDUINO)
     // Prefer the host OS RNG first when running under Portduino.
+#ifdef __linux__
     ssize_t generated = ::getrandom(buffer, length, 0);
     if (generated == static_cast<ssize_t>(length)) {
         filled = true;
     }
+#else
+    // arc4random_buf is available on Darwin/BSD and cannot fail.
+    ::arc4random_buf(buffer, length);
+    filled = true;
+#endif
 
     if (!filled) {
         fillWithRandomDevice(buffer, length);
