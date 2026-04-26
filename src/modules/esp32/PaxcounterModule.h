@@ -15,6 +15,9 @@ class PaxcounterModule : private concurrency::OSThread, public ProtobufModule<me
 {
     bool firstTime = true;
     bool reportedDataSent = true;
+    bool paxModeActive = false;       // PAX scanning active (BLE deinited)
+    uint32_t bootTime = 0;            // When we booted
+    static const uint32_t BLE_PAIRING_WINDOW_MS = 60000; // 60 sec BLE window
 
     static void handlePaxCounterReportRequest();
 
@@ -27,11 +30,10 @@ class PaxcounterModule : private concurrency::OSThread, public ProtobufModule<me
     bool sendInfo(NodeNum dest = NODENUM_BROADCAST);
     virtual bool handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_Paxcount *p) override;
     virtual meshtastic_MeshPacket *allocReply() override;
-    // Modified: allow PAX with BLE enabled (custom Heltec V2.1 build)
-    // Original required BLE+WiFi off for promiscuous mode scanning
-    bool isActive() { return moduleConfig.paxcounter.enabled; }
+    void startPaxMode();              // Deinit NimBLE + start libpax
+    bool isActive() { return moduleConfig.paxcounter.enabled && paxModeActive; }
 #if HAS_SCREEN
-    virtual bool wantUIFrame() override { return isActive(); }
+    virtual bool wantUIFrame() override { return moduleConfig.paxcounter.enabled; }
     virtual void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) override;
 #endif
 };

@@ -3,6 +3,7 @@
 #include "Default.h"
 #include "MeshService.h"
 #include "PaxcounterModule.h"
+#include "nimble/NimbleBluetooth.h"
 #include "graphics/ScreenFonts.h"
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/images.h"
@@ -76,42 +77,77 @@ meshtastic_MeshPacket *PaxcounterModule::allocReply()
     return allocDataProtobuf(pl);
 }
 
+void PaxcounterModule::startPaxMode()
+{
+    LOG_INFO("PAX State Machine: switching to PAX mode (deinit BLE, start scanning)");
+    paxModeActive = true;
+
+    // Deinit NimBLE to free BLE controller for libpax
+    // NOTE: This is ONE-WAY. Needs reboot to get BLE back.
+    extern NimbleBluetooth *nimbleBluetooth;
+    if (nimbleBluetooth) {
+        nimbleBluetooth->deinit();
+    }
+
+    // Small delay for BLE controller to release
+    delay(500);
+
+    struct libpax_config_t configuration;
+    libpax_default_config(&configuration);
+    configuration.blecounter = 1;
+    configuration.blescantime = 0; // infinite
+    configuration.wificounter = 0; // WiFi disabled (OOM on ESP32 classic)
+    configuration.wifi_channel_map = WIFI_CHANNEL_ALL;
+    configuration.wifi_channel_switch_interval = 50;
+    configuration.wifi_rssi_threshold = Default::getConfiguredOrDefault(moduleConfig.paxcounter.wifi_threshold, -80);
+    configuration.ble_rssi_threshold = Default::getConfiguredOrDefault(moduleConfig.paxcounter.ble_threshold, -80);
+    libpax_update_config(&configuration);
+
+    libpax_counter_init(handlePaxCounterReportRequest, &count_from_libpax,
+                        Default::getConfiguredOrDefault(moduleConfig.paxcounter.paxcounter_update_interval,
+                                                        default_telemetry_broadcast_interval_secs),
+                        0);
+    libpax_counter_start();
+    LOG_INFO("PAX State Machine: BLE scanning started");
+}
+
 int32_t PaxcounterModule::runOnce()
 {
-    if (isActive()) {
-        if (firstTime) {
-            firstTime = false;
-            LOG_DEBUG("Paxcounter starting up with interval of %d seconds",
-                      Default::getConfiguredOrDefault(moduleConfig.paxcounter.paxcounter_update_interval,
-                                                      default_telemetry_broadcast_interval_secs));
-            struct libpax_config_t configuration;
-            libpax_default_config(&configuration);
-
-            configuration.blecounter = 1;
-            configuration.blescantime = 0; // infinite
-            // WiFi counter DISABLED on ESP32 classic - OOM crash when BLE+WiFi promiscuous
-            // BLE-only counting still works and detects most devices
-            configuration.wificounter = 0;
-            configuration.wifi_channel_map = WIFI_CHANNEL_ALL;
-            configuration.wifi_channel_switch_interval = 50;
-            configuration.wifi_rssi_threshold = Default::getConfiguredOrDefault(moduleConfig.paxcounter.wifi_threshold, -80);
-            configuration.ble_rssi_threshold = Default::getConfiguredOrDefault(moduleConfig.paxcounter.ble_threshold, -80);
-            libpax_update_config(&configuration);
-
-            // internal processing initialization
-            libpax_counter_init(handlePaxCounterReportRequest, &count_from_libpax,
-                                Default::getConfiguredOrDefault(moduleConfig.paxcounter.paxcounter_update_interval,
-                                                                default_telemetry_broadcast_interval_secs),
-                                0);
-            libpax_counter_start();
-        } else {
-            sendInfo(NODENUM_BROADCAST);
-        }
-        return Default::getConfiguredOrDefaultMsScaled(moduleConfig.paxcounter.paxcounter_update_interval,
-                                                       default_telemetry_broadcast_interval_secs, numOnlineNodes);
-    } else {
+    if (!moduleConfig.paxcounter.enabled) {
         return disable();
     }
+
+    // BLE State Machine:
+    // 1. Boot: BLE ON (NimBLE active, Meshtastic app can connect)
+    // 2. After 60 sec without BLE connection: deinit NimBLE, start PAX
+    // 3. PAX mode: BLE-only device counting, no app connection
+    // 4. To return to BLE mode: reboot device
+
+    if (!paxModeActive) {
+        // Still in BLE pairing window
+        if (bootTime == 0) {
+            bootTime = millis();
+            LOG_INFO("PAX State Machine: BLE pairing window open (60 sec)");
+        }
+
+        uint32_t elapsed = millis() - bootTime;
+        if (elapsed >= BLE_PAIRING_WINDOW_MS) {
+            // Timeout - no BLE connection, switch to PAX
+            startPaxMode();
+        } else {
+            // Still waiting
+            return 1000; // Check every 1 sec
+        }
+    }
+
+    // PAX mode active - normal operation
+    if (paxModeActive) {
+        sendInfo(NODENUM_BROADCAST);
+        return Default::getConfiguredOrDefaultMsScaled(moduleConfig.paxcounter.paxcounter_update_interval,
+                                                       default_telemetry_broadcast_interval_secs, numOnlineNodes);
+    }
+
+    return 1000;
 }
 
 #if HAS_SCREEN
