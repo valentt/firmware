@@ -16,8 +16,11 @@ class PaxcounterModule : private concurrency::OSThread, public ProtobufModule<me
     bool firstTime = true;
     bool reportedDataSent = true;
     bool paxModeActive = false;       // PAX scanning active (BLE deinited)
+    bool bleEverConnected = false;    // True after first MESH connection
     uint32_t bootTime = 0;            // When we booted
-    static const uint32_t BLE_PAIRING_WINDOW_MS = 60000; // 60 sec BLE window
+    uint32_t lastDisconnectTime = 0;  // When BLE app last disconnected (0 = never/connected)
+    static const uint32_t BLE_PAIRING_WINDOW_MS = 300000; // 5 min initial pairing window
+    static const uint32_t BLE_RECONNECT_TIMEOUT_MS = 60000; // 60s after disconnect
 
     static void handlePaxCounterReportRequest();
 

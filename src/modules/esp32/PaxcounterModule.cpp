@@ -118,26 +118,48 @@ int32_t PaxcounterModule::runOnce()
     }
 
     // BLE State Machine:
-    // 1. Boot: BLE ON (NimBLE active, Meshtastic app can connect)
-    // 2. After 60 sec without BLE connection: deinit NimBLE, start PAX
-    // 3. PAX mode: BLE-only device counting, no app connection
-    // 4. To return to BLE mode: reboot device
+    // BLE_PAIRING (5 min window) -> MESH_MODE (BLE connected) | PAX_MODE (timeout)
+    // MESH_MODE -> PAX_MODE (BLE disconnected + 60s no reconnect)
+    // PAX_MODE: ONE-WAY, requires reboot to return to BLE
 
     if (!paxModeActive) {
-        // Still in BLE pairing window
         if (bootTime == 0) {
             bootTime = millis();
-            LOG_INFO("PAX State Machine: BLE pairing window open (60 sec)");
+            LOG_INFO("PAX State Machine: BLE pairing window open (5 min)");
         }
 
-        uint32_t elapsed = millis() - bootTime;
-        if (elapsed >= BLE_PAIRING_WINDOW_MS) {
-            // Timeout - no BLE connection, switch to PAX
-            startPaxMode();
-        } else {
-            // Still waiting
-            return 1000; // Check every 1 sec
+        extern NimbleBluetooth *nimbleBluetooth;
+        bool bleConnected = (nimbleBluetooth && nimbleBluetooth->isConnected());
+
+        if (bleConnected) {
+            // MESH_MODE: BLE app connected, never timeout to PAX
+            if (!bleEverConnected) {
+                bleEverConnected = true;
+                LOG_INFO("PAX State Machine: BLE app connected, entering MESH mode");
+            }
+            lastDisconnectTime = 0;
+            return 5000;
         }
+
+        // Not connected right now
+        if (bleEverConnected) {
+            // Was connected before -> use disconnect timer (60s reconnect window)
+            if (lastDisconnectTime == 0) {
+                lastDisconnectTime = millis();
+                LOG_INFO("PAX State Machine: BLE disconnected, 60s reconnect window");
+            }
+            if (millis() - lastDisconnectTime >= BLE_RECONNECT_TIMEOUT_MS) {
+                LOG_INFO("PAX State Machine: BLE reconnect timeout, switching to PAX");
+                startPaxMode();
+            }
+        } else {
+            // Never connected -> use initial pairing window timeout
+            if (millis() - bootTime >= BLE_PAIRING_WINDOW_MS) {
+                LOG_INFO("PAX State Machine: pairing window expired, switching to PAX");
+                startPaxMode();
+            }
+        }
+        return 1000;
     }
 
     // PAX mode active - normal operation
