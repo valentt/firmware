@@ -27,7 +27,9 @@ class PaxcounterModule : private concurrency::OSThread, public ProtobufModule<me
     bool sendInfo(NodeNum dest = NODENUM_BROADCAST);
     virtual bool handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_Paxcount *p) override;
     virtual meshtastic_MeshPacket *allocReply() override;
-    bool isActive() { return moduleConfig.paxcounter.enabled && !config.bluetooth.enabled && !config.network.wifi_enabled; }
+    // Modified: allow PAX with BLE enabled (custom Heltec V2.1 build)
+    // Original required BLE+WiFi off for promiscuous mode scanning
+    bool isActive() { return moduleConfig.paxcounter.enabled; }
 #if HAS_SCREEN
     virtual bool wantUIFrame() override { return isActive(); }
     virtual void drawFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y) override;
