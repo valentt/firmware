@@ -707,6 +707,8 @@ class Screen : public concurrency::OSThread
             uint8_t firstFavorite = 255;
             uint8_t lastFavorite = 255;
             uint8_t lora = 255;
+            uint8_t firstModule = 255;  // First module-frame index (paxcounter, etc.)
+            uint8_t lastModule = 255;   // Last module-frame index
         } positions;
 
         uint8_t frameCount = 0;

@@ -2784,6 +2784,9 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case ThrottleMessage:
         screen->showSimpleBanner("Too Many Attempts\nTry again in 60 seconds.", 5000);
         break;
+    case PaxcounterMenu:
+        paxcounterMenu();
+        break;
     case MessageResponseMenu:
         messageResponseMenu();
         break;
@@ -2807,6 +2810,35 @@ void menuHandler::saveUIConfig()
 {
     nodeDB->saveProto("/prefs/uiconfig.proto", meshtastic_DeviceUIConfig_size, &meshtastic_DeviceUIConfig_msg, &uiconfig);
 }
+
+#if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_PAXCOUNTER
+void menuHandler::paxcounterMenu()
+{
+    // Long-press menu on PAX counter screen.
+    // CEO request 26.04.2026: "na pax kranu želim menu na long press, isto ka na ostalim ekranima".
+    enum optionsNumbers { Back, RebootForBLE, ToggleAutoUpdate };
+
+    static const char *optionsArray[] = {"Back", "Reboot (re-enable BLE)", "Toggle Auto Update"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "PAX Counter";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == RebootForBLE) {
+            // PAX_MODE deinits NimBLE one-way, so reboot is the only path back to BLE pairing window.
+            screen->showSimpleBanner("Rebooting to re-enable BLE...", 1500);
+            rebootAtMsec = (millis() + 1500);
+        } else if (selected == ToggleAutoUpdate) {
+            moduleConfig.paxcounter.enabled = !moduleConfig.paxcounter.enabled;
+            service->reloadConfig(SEGMENT_MODULECONFIG);
+            screen->showSimpleBanner(moduleConfig.paxcounter.enabled ? "PAX enabled" : "PAX disabled", 1500);
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+#else
+void menuHandler::paxcounterMenu() {}
+#endif
 
 } // namespace graphics
 

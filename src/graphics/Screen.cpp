@@ -40,6 +40,9 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "draw/NotificationRenderer.h"
 #include "draw/UIRenderer.h"
 #include "modules/CannedMessageModule.h"
+#if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_PAXCOUNTER
+#include "modules/esp32/PaxcounterModule.h"
+#endif
 
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
@@ -1257,6 +1260,7 @@ void Screen::setFrames(FrameFocus focus)
     moduleFrames = MeshModule::GetMeshModulesWithUIFrames(numframes);
     LOG_DEBUG("Show %d module frames", moduleFrames.size());
 
+    uint8_t moduleFramesStart = numframes;
     for (auto i = moduleFrames.begin(); i != moduleFrames.end(); ++i) {
         // Draw the module frame, using the hack described above
         if (*i != nullptr) {
@@ -1273,6 +1277,10 @@ void Screen::setFrames(FrameFocus focus)
             indicatorIcons.push_back(icon_module);
             numframes++;
         }
+    }
+    if (numframes > moduleFramesStart) {
+        fsi.positions.firstModule = moduleFramesStart;
+        fsi.positions.lastModule = numframes - 1;
     }
 
     LOG_DEBUG("Added modules.  numframes: %d", numframes);
@@ -1996,6 +2004,20 @@ int Screen::handleInputEvent(const InputEvent *event)
                     menuHandler::nodeListMenu();
                 } else if (this->ui->getUiState()->currentFrame == framesetInfo.positions.wifi) {
                     menuHandler::wifiBaseMenu();
+                } else if (framesetInfo.positions.firstModule != 255 &&
+                           this->ui->getUiState()->currentFrame >= framesetInfo.positions.firstModule &&
+                           this->ui->getUiState()->currentFrame <= framesetInfo.positions.lastModule) {
+                    // Module frame: dispatch SELECT to the corresponding module
+                    int moduleIdx = this->ui->getUiState()->currentFrame - framesetInfo.positions.firstModule;
+                    if (moduleIdx >= 0 && moduleIdx < (int)moduleFrames.size()) {
+                        MeshModule *m = moduleFrames[moduleIdx];
+#if defined(ARCH_ESP32) && !MESHTASTIC_EXCLUDE_PAXCOUNTER
+                        if (m == paxcounterModule) {
+                            menuHandler::paxcounterMenu();
+                        }
+#endif
+                        (void)m; // suppress unused warning if no module handles SELECT
+                    }
                 }
             } else if (event->inputEvent == INPUT_BROKER_BACK) {
                 showFrame(FrameDirection::PREVIOUS);
